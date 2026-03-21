@@ -1,0 +1,132 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+model Tenant {
+  id  String @id@default(uuid())
+  name  String
+  slug  String @unique
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+
+  //Relations
+
+users User[]
+departments Department[]
+leaveTypes  LeaveType[]
+
+@@map("tenants")
+}
+
+
+//Roles
+
+enum Role{
+  EMPLOYEE  // Can view own data, submit leave requests
+  TEAM_LEAD  // Team Lead - can comment on requests
+  DEPT_HEAD  // Dept Head - can approve/reject requests
+  HR_ADMIN  // Can manage employees, override balances
+  TENANT_ADMIN  // Can configure company-wide policies
+}
+
+
+
+//USER (EMPLOYEE)
+//CONTAINS EVERY PERSON WHO LOGS INTO APEXHR
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  password       String                        
+  firstName      String
+  lastName       String
+  role           Role      @default(EMPLOYEE)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Multi-tenancy: which company does this user belong to?
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
+
+    // Which department are they in?
+  departmentId   String?
+  department     Department? @relation(fields: [departmentId], references: [id])
+
+    // Relations to other modules 
+  refreshTokens  RefreshToken[]
+
+  @@map("users")
+}
+// REFRESH TOKEN
+model RefreshToken {
+  id          String   @id @default(uuid())
+  token       String   @db.Text
+  isRevoked   Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  // Which user does this token belong to?
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@map("refresh_tokens")
+}
+
+// DEPARTMENT
+model Department {
+  id          String   @id @default(uuid())
+  name        String                          // e.g. "Engineering"
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Multi-tenancy
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  // parent-child hierarchy
+  parentId    String?
+  parent      Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children    Department[] @relation("DepartmentHierarchy")
+
+  // Relations
+  users       User[]
+
+  @@map("departments")
+}
+
+// LEAVE TYPE
+// e.g. Annual Leave, Sick Leave, Maternity Leave
+model LeaveType {
+  id              String   @id @default(uuid())
+  name            String                        // e.g. "Annual Leave"
+  description     String?
+  isPaid          Boolean  @default(true)       // Paid or unpaid leave
+  accrualRate     Float    @default(0)          // Days accrued per month (e.g. 1.5)
+  maxCarryover    Float    @default(0)          // Max days that can carry to next year
+  maxDaysPerYear  Float?                        // Cap on total days per year
+  requiresApproval Boolean @default(true)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Multi-tenancy
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@map("leave_types")
+}
+
+
+
