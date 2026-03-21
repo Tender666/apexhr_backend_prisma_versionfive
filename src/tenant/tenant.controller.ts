@@ -38,7 +38,7 @@ export class TenantController {
     return this.tenantService.update(slug, updateTenantDto);
   }
 
-  @Delete('slug')
+  @Delete(':slug')
   remove(@Param('slug') slug: string) {
     return this.tenantService.remove(slug);
   }
