@@ -41,7 +41,7 @@ export class AuthService {
   }
 
   findAll() {
-    return `This action returns all auth`;
+    return this.prismaService.user.findMany();
   }
 
   findOne(id: number) {
