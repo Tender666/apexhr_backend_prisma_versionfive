@@ -9,12 +9,14 @@ import { TenantService } from 'src/tenant/tenant.service';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from './dto/login.dto';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly tenantService: TenantService,
+    private readonly jwtService: JwtService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -41,7 +43,7 @@ export class AuthService {
       },
     });
 
-    return user;
+    return { user, message: 'user account for tenant successfully created' };
   }
 
   async login(dto: LoginDto) {
@@ -57,8 +59,28 @@ export class AuthService {
     if (!passwordMatch) {
       throw new UnauthorizedException('Invalid Credentials');
     }
+    const { password, ...userWithoutPassword } = user;
+    const tokens = this.generateUserToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      tenantId: user.tenantId,
+    });
 
-    return user;
+    return {
+      user: userWithoutPassword,
+      message: 'Successfully logged IN',
+      ...tokens,
+    };
+  }
+  generateUserToken(payload: {
+    userId: string;
+    email: string;
+    role: Role;
+    tenantId: string;
+  }) {
+    const accessToken = this.jwtService.sign(payload);
+    return { accessToken };
   }
 
   findOne(id: number) {
