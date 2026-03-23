@@ -32,7 +32,7 @@ export class TenantService {
       where: { slug },
     });
     if (!existingSlug) {
-      throw new NotFoundException('user not found');
+      throw new NotFoundException('Tenant not found');
     }
     return existingSlug;
   }
