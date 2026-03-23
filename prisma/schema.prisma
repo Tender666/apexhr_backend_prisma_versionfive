@@ -70,7 +70,7 @@ model User {
 // REFRESH TOKEN
 model RefreshToken {
   id          String   @id @default(uuid())
-  token       String   @db.Text
+  token       String   @unique @db.VarChar(512)
   isRevoked   Boolean  @default(false)
   expiresAt   DateTime
   createdAt   DateTime @default(now())
