@@ -1,17 +1,31 @@
 import {
   IsString,
   IsNotEmpty,
-  MinLength,
-  Matches,
   IsEmail,
   IsOptional,
+  MinLength,
+  Matches,
 } from 'class-validator';
 
-export class CreateTenantDto {
+export class RegisterTenantDto {
+  // ── HR Admin Info ──
+  @IsString()
+  @IsNotEmpty()
+  firstName: string;
+
+  @IsString()
+  @IsNotEmpty()
+  lastName: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
+  // ── Company Info ──
   @IsString()
   @IsNotEmpty()
   @MinLength(2)
-  name: string;
+  companyName: string;
 
   @IsString()
   @IsNotEmpty()

@@ -1,11 +1,15 @@
 import {
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { RegisterDto } from './dto/register.dto';
+import { RegisterTenantDto } from './dto/register-tenant.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { PrismaService } from 'prisma/prisma.service';
 import { TenantService } from 'src/tenant/tenant.service';
+import { MailService } from 'src/mail/mail.service';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from './dto/login.dto';
@@ -18,25 +22,104 @@ export class AuthService {
     private readonly prismaService: PrismaService,
     private readonly tenantService: TenantService,
     private readonly jwtService: JwtService,
+    private readonly mailService: MailService,
   ) {}
 
   // ─────────────────────────────────────────────
-  // REGISTRATION
+  // REGISTER TENANT (Company + HR Admin in one go)
+  // ─────────────────────────────────────────────
+
+  async registerTenant(dto: RegisterTenantDto) {
+    // 1. Check slug is not already taken
+    const existingTenant = await this.prismaService.tenant.findUnique({
+      where: { slug: dto.slug },
+    });
+    if (existingTenant) {
+      throw new ConflictException('A company with this slug already exists');
+    }
+
+    // 2. Generate a temporary password for the HR Admin
+    const tempPassword = Math.random().toString(36).slice(-8) + 'A@1';
+
+    // 3. Hash the temp password
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+    // 4. Create tenant + HR Admin user in one transaction
+    const tenant = await this.prismaService.tenant.create({
+      data: {
+        name: dto.companyName,
+        slug: dto.slug,
+        companyType: dto.companyType,
+        companyPhone: dto.companyPhone,
+        companyLocation: dto.companyLocation,
+        users: {
+          create: {
+            email: dto.email,
+            password: hashedPassword,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            role: Role.HR_ADMIN,
+            mustChangePassword: true,
+          },
+        },
+      },
+      include: { users: true },
+    });
+
+    const hrAdmin = tenant.users[0];
+
+    // 5. Send welcome email with temp password
+    await this.mailService.sendTenantWelcomeEmail(
+      dto.email,
+      dto.firstName,
+      dto.companyName,
+      tempPassword,
+    );
+
+    // 6. Generate tokens
+    const tokens = await this.generateUserToken({
+      userId: hrAdmin.id,
+      email: hrAdmin.email,
+      role: hrAdmin.role,
+      tenantId: tenant.id,
+    });
+
+    const { password, ...hrAdminWithoutPassword } = hrAdmin;
+
+    return {
+      message:
+        'Company registered successfully. Check your email for login credentials.',
+      tenant: {
+        id: tenant.id,
+        name: tenant.name,
+        slug: tenant.slug,
+      },
+      user: hrAdminWithoutPassword,
+      ...tokens,
+    };
+  }
+
+  // ─────────────────────────────────────────────
+  // REGISTRATION (Add individual user to tenant)
   // ─────────────────────────────────────────────
 
   async register(dto: RegisterDto) {
     // Verify the tenant exists before creating a user under it
     const tenant = await this.tenantService.findOne(dto.tenantSlug);
 
-    
-    const existingUser = await this.prismaService.user.findUnique({
-      where: { email: dto.email },
+    // ✅ Fix: use findFirst instead of findUnique with composite key
+    const existingUser = await this.prismaService.user.findFirst({
+      where: {
+        email: dto.email,
+        tenantId: tenant.id,
+      },
     });
     if (existingUser) {
-      throw new ConflictException('A user with this email already exists');
+      throw new ConflictException(
+        'A user with this email already exists in this tenant',
+      );
     }
 
-    // Hash password 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
     const user = await this.prismaService.user.create({
@@ -46,12 +129,12 @@ export class AuthService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         tenantId: tenant.id,
-        role: dto.role ?? Role.EMPLOYEE,       
-        departmentId: dto.departmentId ?? null, 
+        role: dto.role ?? Role.EMPLOYEE,
+        departmentId: dto.departmentId ?? null,
       },
     });
 
-    return { user, message: 'user account for tenant successfully created' };
+    return { user, message: 'User account for tenant successfully created' };
   }
 
   // ─────────────────────────────────────────────
@@ -59,8 +142,7 @@ export class AuthService {
   // ─────────────────────────────────────────────
 
   async login(dto: LoginDto) {
-    // Look up user by email
-    const user = await this.prismaService.user.findUnique({
+    const user = await this.prismaService.user.findFirst({
       where: { email: dto.email },
     });
 
@@ -68,16 +150,13 @@ export class AuthService {
       throw new UnauthorizedException('Invalid Credentials');
     }
 
-    // Verify the provided password against the stored hash
     const passwordMatch = await bcrypt.compare(dto.password, user.password);
     if (!passwordMatch) {
       throw new UnauthorizedException('Invalid Credentials');
     }
 
-    // Strip password from the response payload
     const { password, ...userWithoutPassword } = user;
 
-    // Issue access + refresh tokens
     const tokens = await this.generateUserToken({
       userId: user.id,
       email: user.email,
@@ -87,7 +166,7 @@ export class AuthService {
 
     return {
       user: userWithoutPassword,
-      message: 'Successfully logged IN',
+      message: 'Successfully logged in',
       ...tokens,
     };
   }
@@ -97,16 +176,14 @@ export class AuthService {
   // ─────────────────────────────────────────────
 
   async logout(refreshToken: string) {
-    // Validate that the token exists before attempting deletion
     const token = await this.prismaService.refreshToken.findUnique({
       where: { token: refreshToken },
     });
 
     if (!token) {
-      throw new UnauthorizedException('Invalid refresh Token');
+      throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Revoke the token by removing it from the DB
     await this.prismaService.refreshToken.delete({
       where: { id: token.id },
     });
@@ -115,13 +192,37 @@ export class AuthService {
   }
 
   // ─────────────────────────────────────────────
+  // CHANGE PASSWORD
+  // ─────────────────────────────────────────────
+
+  async changePassword(dto: ChangePasswordDto) {
+    // ✅ Fix: use findFirst instead of findUnique for passwordResetToken
+    const user = await this.prismaService.user.findFirst({
+      where: { passwordResetToken: dto.resetToken },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Invalid or expired reset token');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
+
+    // ✅ Fix: removed passwordResetToken from data (not yet in Prisma client)
+    await this.prismaService.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        mustChangePassword: false,
+      },
+    });
+
+    return { message: 'Password changed successfully' };
+  }
+
+  // ─────────────────────────────────────────────
   // TOKEN MANAGEMENT
   // ─────────────────────────────────────────────
 
-  /**
-   * Generates a signed JWT access token and a UUID-based refresh token.
-   * The refresh token is persisted in the DB with a 7-day expiry.
-   */
   async generateUserToken(payload: {
     userId: string;
     email: string;
@@ -130,7 +231,6 @@ export class AuthService {
   }) {
     const accessToken = this.jwtService.sign(payload);
 
-    // Refresh token is a plain UUID 
     const refreshToken = uuidv4();
 
     await this.prismaService.refreshToken.create({
@@ -144,20 +244,15 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  /**
-   * Validates a refresh token, rotates it (old one deleted, new one issued),
-   * and returns a fresh token pair.
-   */
   async refreshToken(refreshToken: string) {
     const token = await this.prismaService.refreshToken.findUnique({
       where: { token: refreshToken },
     });
 
     if (!token) {
-      throw new UnauthorizedException('Invalid refresh Token');
+      throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Guard against expired tokens — clean them up on detection
     if (token.expiresAt < new Date()) {
       await this.prismaService.refreshToken.delete({
         where: { id: token.id },
@@ -175,7 +270,6 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    // Rotate: delete current token before issuing a new pair
     await this.prismaService.refreshToken.delete({
       where: { id: token.id },
     });
@@ -192,17 +286,14 @@ export class AuthService {
   // UTILITY / PLACEHOLDER METHODS
   // ─────────────────────────────────────────────
 
-  /** Returns all users — intended for admin/debug use */
   findAll() {
     return this.prismaService.user.findMany();
   }
 
-  // TODO: Implement proper single-user lookup
   findOne(id: number) {
     return `This action returns a #${id} auth`;
   }
 
-  // TODO: Implement user removal logic
   remove(id: number) {
     return `This action removes a #${id} auth`;
   }

@@ -5,6 +5,7 @@ import { PrismaService } from 'prisma/prisma.service';
 import { TenantService } from 'src/tenant/tenant.service';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { MailModule } from 'src/mail/mail.module'; // ← Add this
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { ConfigService } from '@nestjs/config';
         },
       }),
     }),
+    MailModule, // ← Add this
   ],
   controllers: [AuthController],
   providers: [AuthService, PrismaService, TenantService],

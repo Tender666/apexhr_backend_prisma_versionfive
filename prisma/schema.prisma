@@ -12,21 +12,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 model Tenant {
-  id  String @id@default(uuid())
-  name  String
-  slug  String @unique
-  isActive  Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String   @id @default(uuid())
+  name            String
+  slug            String   @unique
+  companyType     String?
+  companyPhone    String?
+  companyLocation String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
+  // Relations
+  users           User[]
+  departments     Department[]
+  leaveTypes      LeaveType[]
 
-  //Relations
-
-users User[]
-departments Department[]
-leaveTypes  LeaveType[]
-
-@@map("tenants")
+  @@map("tenants")
 }
 
 
@@ -46,11 +47,13 @@ enum Role{
 //CONTAINS EVERY PERSON WHO LOGS INTO APEXHR
 model User {
   id             String    @id @default(uuid())
-  email          String    @unique
+  email          String                            // ← removed @unique
   password       String                        
   firstName      String
   lastName       String
   role           Role      @default(EMPLOYEE)
+  mustChangePassword  Boolean   @default(false)    
+  passwordResetToken  String?   @unique    
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -58,15 +61,17 @@ model User {
   tenantId       String
   tenant         Tenant    @relation(fields: [tenantId], references: [id])
 
-    // Which department are they in?
+  // Which department are they in?
   departmentId   String?
   department     Department? @relation(fields: [departmentId], references: [id])
 
-    // Relations to other modules 
+  // Relations to other modules 
   refreshTokens  RefreshToken[]
 
+  @@unique([email, tenantId])           // ← email unique per tenant only
   @@map("users")
 }
+
 // REFRESH TOKEN
 model RefreshToken {
   id          String   @id @default(uuid())
@@ -127,6 +132,3 @@ model LeaveType {
 
   @@map("leave_types")
 }
-
-
-

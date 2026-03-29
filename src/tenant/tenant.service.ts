@@ -19,7 +19,13 @@ export class TenantService {
       throw new ConflictException('Tenant with this slug already exists');
     }
     return this.prisma.tenant.create({
-      data: createTenantDto,
+      data: {
+        name: createTenantDto.name,
+        slug: createTenantDto.slug,
+        companyType: createTenantDto.companyType,
+        companyPhone: createTenantDto.companyPhone,
+        companyLocation: createTenantDto.companyLocation,
+      },
     });
   }
 
